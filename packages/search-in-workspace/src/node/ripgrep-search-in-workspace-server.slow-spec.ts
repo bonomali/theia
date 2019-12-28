@@ -197,6 +197,10 @@ after(() => {
     }
 });
 
+interface SearchInWorkspaceExpectation {
+    root: string, fileUri: string, line: number, character: number, length: number, lineText: string
+}
+
 // Compare expected and actual search results.
 //
 // For convenience, the expected entries do not have their lineText field set
@@ -207,8 +211,9 @@ after(() => {
 // The expected entries should also have the file field set relatively to
 // rootDir.  This function will update the field to contain the absolute path.
 
-function compareSearchResults(expected: SearchInWorkspaceResult[], actual: SearchInWorkspaceResult[]): void {
-    expect(actual.length).eq(expected.length);
+function compareSearchResults(expected: SearchInWorkspaceExpectation[], actual: SearchInWorkspaceResult[]): void {
+    const allMatches = actual.reduceRight((p, v) => p + v.matches.length, 0);
+    expect(allMatches).eq(expected.length);
 
     if (actual.length !== expected.length) {
         return;
@@ -222,8 +227,9 @@ function compareSearchResults(expected: SearchInWorkspaceResult[], actual: Searc
             e.lineText = line;
             e.fileUri = FileUri.create(path.join(getRootPathFromName(e.fileUri), e.fileUri)).toString();
 
-            const a = actual.find(l => l.fileUri === e.fileUri && l.line === e.line && l.character === e.character);
-            expect(a).deep.eq(e);
+            const a = actual.find(l => l.fileUri === e.fileUri)!;
+            const match = a.matches.find(m => m.line === e.line && m.character === e.character)!;
+            expect(match.length).eq(e.length);
         } else {
             // We don't know this file...
             expect.fail();
@@ -238,7 +244,7 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = ' pasta';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [
+            const expected: SearchInWorkspaceExpectation[] = [
                 { root: rootDirAUri, fileUri: 'pastas', line: 1, character: 6, length: pattern.length, lineText: '' },
             ];
             compareSearchResults(expected, client.results);
@@ -252,7 +258,7 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = 'pasta ';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [
+            const expected: SearchInWorkspaceExpectation[] = [
                 { root: rootDirAUri, fileUri: 'pastas', line: 1, character: 1, length: pattern.length, lineText: '' },
             ];
             compareSearchResults(expected, client.results);
@@ -267,7 +273,7 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = 'carrot';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [
+            const expected: SearchInWorkspaceExpectation[] = [
                 { root: rootDirAUri, fileUri: 'carrots', line: 1, character: 11, length: pattern.length, lineText: '' },
                 { root: rootDirAUri, fileUri: 'carrots', line: 2, character: 6, length: pattern.length, lineText: '' },
                 { root: rootDirAUri, fileUri: 'carrots', line: 2, character: 35, length: pattern.length, lineText: '' },
@@ -287,7 +293,7 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = 'carrot';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [
+            const expected: SearchInWorkspaceExpectation[] = [
                 { root: rootDirAUri, fileUri: 'carrots', line: 1, character: 11, length: pattern.length, lineText: '' },
                 { root: rootDirAUri, fileUri: 'carrots', line: 2, character: 6, length: pattern.length, lineText: '' },
                 { root: rootDirAUri, fileUri: 'carrots', line: 2, character: 35, length: pattern.length, lineText: '' },
@@ -308,7 +314,7 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = 'carrot';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [
+            const expected: SearchInWorkspaceExpectation[] = [
                 { root: rootDirAUri, fileUri: 'carrots', line: 1, character: 11, length: pattern.length, lineText: '' },
                 { root: rootDirAUri, fileUri: 'carrots', line: 3, character: 28, length: pattern.length, lineText: '' },
                 { root: rootDirAUri, fileUri: 'carrots', line: 3, character: 52, length: pattern.length, lineText: '' },
@@ -328,7 +334,7 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = 'carrot';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [
+            const expected: SearchInWorkspaceExpectation[] = [
                 { root: rootDirAUri, fileUri: 'carrots', line: 1, character: 11, length: pattern.length, lineText: '' },
                 { root: rootDirAUri, fileUri: 'carrots', line: 3, character: 28, length: pattern.length, lineText: '' }
             ];
@@ -345,7 +351,7 @@ describe('ripgrep-search-in-workspace-server', function (): void {
 
     it('should return 1 result when searching for "Carrot"', done => {
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [
+            const expected: SearchInWorkspaceExpectation[] = [
                 { root: rootDirAUri, fileUri: 'carrots', line: 4, character: 1, length: 6, lineText: '' },
             ];
 
@@ -384,7 +390,7 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = 'carrots are orange';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [
+            const expected: SearchInWorkspaceExpectation[] = [
                 { root: rootDirAUri, fileUri: 'carrots', line: 2, character: 6, length: pattern.length, lineText: '' },
             ];
 
@@ -403,9 +409,9 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = 'lots-of-matches';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [];
+            const expected: SearchInWorkspaceExpectation[] = [];
 
-            for (let i = 1; i <= 100; i++) {
+            for (let i = 1; i <= 100000; i++) {
                 expected.push({
                     root: rootDirAUri,
                     fileUri: 'lots-of-matches',
@@ -429,9 +435,9 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = 'lots-of-matches';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [];
+            const expected: SearchInWorkspaceExpectation[] = [];
 
-            for (let i = 1; i <= 100; i++) {
+            for (let i = 1; i <= 1000; i++) {
                 expected.push({
                     root: rootDirAUri,
                     fileUri: 'lots-of-matches',
@@ -457,7 +463,7 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = 'h[e3]l+[o0]';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [
+            const expected: SearchInWorkspaceExpectation[] = [
                 { root: rootDirAUri, fileUri: 'regexes', line: 1, character: 5, length: 5, lineText: '' },
                 { root: rootDirAUri, fileUri: 'regexes', line: 1, character: 14, length: 4, lineText: '' },
                 { root: rootDirAUri, fileUri: 'regexes', line: 1, character: 21, length: 5, lineText: '' },
@@ -479,7 +485,7 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = 'hello.';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [
+            const expected: SearchInWorkspaceExpectation[] = [
                 { root: rootDirAUri, fileUri: 'regexes', line: 1, character: 5, length: 6, lineText: '' }
             ];
 
@@ -497,7 +503,7 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = '-fo+bar';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [
+            const expected: SearchInWorkspaceExpectation[] = [
                 { root: rootDirAUri, fileUri: 'file with spaces', line: 1, character: 28, length: 7, lineText: '' },
             ];
 
@@ -519,7 +525,7 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = '--fo+bar';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [
+            const expected: SearchInWorkspaceExpectation[] = [
                 { root: rootDirAUri, fileUri: 'file with spaces', line: 1, character: 27, length: 8, lineText: '' },
             ];
 
@@ -540,7 +546,7 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = '-foobar';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [
+            const expected: SearchInWorkspaceExpectation[] = [
                 { root: rootDirAUri, fileUri: 'file with spaces', line: 1, character: 28, length: 7, lineText: '' },
             ];
 
@@ -561,7 +567,7 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = '--foobar';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [
+            const expected: SearchInWorkspaceExpectation[] = [
                 { root: rootDirAUri, fileUri: 'file with spaces', line: 1, character: 27, length: 8, lineText: '' },
             ];
 
@@ -582,7 +588,7 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = '-glob';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [
+            const expected: SearchInWorkspaceExpectation[] = [
                 { root: rootDirAUri, fileUri: 'glob', line: 1, character: 7, length: 5, lineText: '' },
                 { root: rootDirAUri, fileUri: 'glob.txt', line: 1, character: 6, length: 5, lineText: '' }
             ];
@@ -598,7 +604,7 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = '--glob';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [
+            const expected: SearchInWorkspaceExpectation[] = [
                 { root: rootDirAUri, fileUri: 'glob', line: 1, character: 6, length: 6, lineText: '' }
             ];
 
@@ -613,7 +619,7 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = '-glob';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [
+            const expected: SearchInWorkspaceExpectation[] = [
                 { root: rootDirAUri, fileUri: 'glob.txt', line: 1, character: 6, length: 5, lineText: '' }
             ];
 
@@ -628,7 +634,7 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = '-glob';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [
+            const expected: SearchInWorkspaceExpectation[] = [
                 { root: rootDirAUri, fileUri: 'glob.txt', line: 1, character: 6, length: 5, lineText: '' }
             ];
 
@@ -644,7 +650,7 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = ' jag';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [
+            const expected: SearchInWorkspaceExpectation[] = [
                 { root: rootDirAUri, fileUri: 'utf8-file', line: 1, character: 7, length: 4, lineText: '' },
                 { root: rootDirAUri, fileUri: 'utf8-file', line: 1, character: 23, length: 4, lineText: '' },
             ];
@@ -661,7 +667,7 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = ' h?är';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [
+            const expected: SearchInWorkspaceExpectation[] = [
                 { root: rootDirAUri, fileUri: 'utf8-file', line: 1, character: 4, length: 3, lineText: '' },
                 { root: rootDirAUri, fileUri: 'utf8-file', line: 1, character: 20, length: 3, lineText: '' },
                 { root: rootDirAUri, fileUri: 'utf8-file', line: 1, character: 27, length: 4, lineText: '' },
@@ -681,7 +687,7 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = '(hello)?';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [
+            const expected: SearchInWorkspaceExpectation[] = [
             ];
 
             compareSearchResults(expected, client.results);
@@ -695,7 +701,7 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = 'salut";\' echo foo && echo bar; "';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [
+            const expected: SearchInWorkspaceExpectation[] = [
                 { root: rootDirAUri, fileUri: 'special shell characters', line: 1, character: 14, length: 32, lineText: '' },
             ];
 
@@ -710,7 +716,7 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = 'carrot';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [
+            const expected: SearchInWorkspaceExpectation[] = [
                 { root: rootDirBUri, fileUri: 'orange', line: 1, character: 51, length: pattern.length, lineText: '' },
                 { root: rootDirAUri, fileUri: 'carrots', line: 1, character: 11, length: pattern.length, lineText: '' },
                 { root: rootDirAUri, fileUri: 'carrots', line: 2, character: 6, length: pattern.length, lineText: '' },
@@ -732,7 +738,7 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         const pattern = 'folder';
 
         const client = new ResultAccumulator(() => {
-            const expected: SearchInWorkspaceResult[] = [
+            const expected: SearchInWorkspaceExpectation[] = [
                 { root: rootSubdirAUri, fileUri: 'folderSubfolder', line: 1, character: 18, length: pattern.length, lineText: '' },
                 { root: rootSubdirAUri, fileUri: 'folderSubfolder', line: 1, character: 30, length: pattern.length, lineText: '' },
                 { root: rootSubdirAUri, fileUri: 'folderSubfolder', line: 1, character: 18, length: pattern.length, lineText: '' },

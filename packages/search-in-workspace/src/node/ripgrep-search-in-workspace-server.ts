@@ -65,7 +65,7 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
     private ongoingSearches: Map<number, RawProcess> = new Map();
 
     // Each incoming search is given a unique id, returned to the client.  This is the next id we will assigned.
-    private nextSearchId: number = 0;
+    private nextSearchId: number = 1;
 
     private client: SearchInWorkspaceClient | undefined;
 
@@ -82,10 +82,15 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
     }
 
     protected getArgs(options?: SearchInWorkspaceOptions): string[] {
-        const args = ['--json', '--max-count=100'];
+        const args = ['--hidden', '--json'];
         args.push(options && options.matchCase ? '--case-sensitive' : '--ignore-case');
         if (options && options.includeIgnored) {
-            args.push('-uu');
+            args.push('--no-ignore');
+        }
+        if (options && options.maxFileSize) {
+            args.push('--max-filesize=' + options.maxFileSize.trim());
+        } else {
+            args.push('--max-filesize=20M');
         }
         if (options && options.include) {
             for (const include of options.include) {
@@ -116,7 +121,7 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
         // line, --color=always to get color control characters that
         // we'll use to parse the lines.
         const searchId = this.nextSearchId++;
-        const args = this.getArgs(opts);
+        const rgArgs = this.getArgs(opts);
         // if we use matchWholeWord we use regExp internally,
         // so, we need to escape regexp characters if we actually not set regexp true in UI.
         if (opts && opts.matchWholeWord && !opts.useRegExp) {
@@ -129,9 +134,11 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
             }
         }
 
+        const args = [...rgArgs, what].concat(rootUris.map(root => FileUri.fsPath(root)));
+        console.log('rg ' + args.join(' '));
         const processOptions: RawProcessOptions = {
             command: this.rgPath,
-            args: [...args, what].concat(rootUris.map(root => FileUri.fsPath(root)))
+            args
         };
 
         // TODO: Use child_process directly instead of rawProcessFactory?
@@ -159,6 +166,8 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
         // Buffer to accumulate incoming output.
         let databuf: string = '';
 
+        let currentSearchResult: SearchInWorkspaceResult | undefined;
+
         rgProcess.outputStream.on('data', (chunk: string) => {
             // We might have already reached the max number of
             // results, sent a TERM signal to rg, but we still get
@@ -185,8 +194,28 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
 
                 const obj = JSON.parse(lineBuf);
 
-                if (obj['type'] === 'match') {
-                    const data = obj['data'];
+                if (obj.type === 'begin') {
+                    const file = (<RipGrepArbitraryData>obj.data['path']).text;
+                    if (file) {
+                        currentSearchResult = {
+                            fileUri: FileUri.create(file).toString(),
+                            root: this.getRoot(file, rootUris).toString(),
+                            matches: []
+                        };
+                    } else {
+                        this.logger.error('Begin message without path. ' + JSON.stringify(obj));
+                    }
+                } else if (obj.type === 'end') {
+                    if (currentSearchResult && this.client) {
+                        this.client.onResult(searchId, currentSearchResult);
+                    }
+                    currentSearchResult = undefined;
+                } else if (obj.type === 'match') {
+                    if (!currentSearchResult) {
+                        this.logger.error('Got a match but no current result begin.');
+                        continue;
+                    }
+                    const data = obj.data;
                     const file = (<RipGrepArbitraryData>data['path']).text;
                     const line = data['line_number'];
                     const lineText = (<RipGrepArbitraryData>data['lines']).text;
@@ -200,24 +229,21 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
                         const endByte = submatch['end'];
                         const character = byteRangeLengthToCharacterLength(lineText, 0, startByte);
                         const length = byteRangeLengthToCharacterLength(lineText, character, endByte - startByte);
-
-                        const result: SearchInWorkspaceResult = {
-                            fileUri: FileUri.create(file).toString(),
-                            root: this.getRoot(file, rootUris).toString(),
+                        currentSearchResult.matches.push({
                             line,
                             character: character + 1,
                             length,
                             lineText: lineText.replace(/[\r\n]+$/, ''),
-                        };
-
+                        });
                         numResults++;
-                        if (this.client) {
-                            this.client.onResult(searchId, result);
-                        }
 
                         // Did we reach the maximum number of results?
                         if (opts && opts.maxResults && numResults >= opts.maxResults) {
                             rgProcess.kill();
+                            if (currentSearchResult && this.client) {
+                                this.client.onResult(searchId, currentSearchResult);
+                            }
+                            currentSearchResult = undefined;
                             this.wrapUpSearch(searchId);
                             break;
                         }

@@ -22,6 +22,14 @@ export interface SearchInWorkspaceOptions {
      */
     maxResults?: number;
     /**
+     * accepts suffixes of K, M or G which correspond to kilobytes,
+     * megabytes and gigabytes, respectively. If no suffix is provided the input is
+     * treated as bytes.
+     *
+     * defaults to '20M'
+     */
+    maxFileSize?: string;
+    /**
      * Search case sensitively if true.
      */
     matchCase?: boolean;
@@ -59,6 +67,13 @@ export interface SearchInWorkspaceResult {
     fileUri: string;
 
     /**
+     * matches found in the file
+     */
+    matches: SearchMatch[];
+}
+
+export interface SearchMatch {
+    /**
      * The (1-based) line number of the result.
      */
     line: number;
@@ -90,16 +105,7 @@ export namespace SearchInWorkspaceResult {
         if (a.fileUri !== b.fileUri) {
             return a.fileUri < b.fileUri ? -1 : 1;
         }
-
-        if (a.line !== b.line) {
-            return a.line - b.line;
-        }
-
-        if (a.character !== b.character) {
-            return a.character - b.character;
-        }
-
-        return a.length - b.length;
+        return 0;
     }
 }
 

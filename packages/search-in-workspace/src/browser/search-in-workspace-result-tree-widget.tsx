@@ -34,7 +34,7 @@ import { CancellationTokenSource, Emitter, Event } from '@theia/core';
 import { EditorManager, EditorDecoration, TrackedRangeStickiness, OverviewRulerLane, EditorWidget, ReplaceOperation, EditorOpenerOptions } from '@theia/editor/lib/browser';
 import { WorkspaceService } from '@theia/workspace/lib/browser';
 import { FileResourceResolver } from '@theia/filesystem/lib/browser';
-import { SearchInWorkspaceResult, SearchInWorkspaceOptions } from '../common/search-in-workspace-interface';
+import { SearchInWorkspaceResult, SearchInWorkspaceOptions, SearchMatch } from '../common/search-in-workspace-interface';
 import { SearchInWorkspaceService } from './search-in-workspace-service';
 import { MEMORY_TEXT } from './in-memory-text-resource';
 import URI from '@theia/core/lib/common/uri';
@@ -83,7 +83,7 @@ export namespace SearchInWorkspaceFileNode {
     }
 }
 
-export interface SearchInWorkspaceResultLineNode extends SelectableTreeNode, SearchInWorkspaceResult { // line node
+export interface SearchInWorkspaceResultLineNode extends SelectableTreeNode, SearchInWorkspaceResult, SearchMatch { // line node
     parent: SearchInWorkspaceFileNode
 }
 export namespace SearchInWorkspaceResultLineNode {
@@ -215,31 +215,21 @@ export class SearchInWorkspaceResultTreeWidget extends TreeWidget {
                 }
                 const { path } = this.filenameAndPath(result.root, result.fileUri);
                 const tree = this.resultTree;
-                const rootFolderNode = tree.get(result.root);
-
-                if (rootFolderNode) {
-                    const fileNode = rootFolderNode.children.find(f => f.fileUri === result.fileUri);
-                    if (fileNode) {
-                        const line = this.createResultLineNode(result, fileNode);
-                        if (fileNode.children.findIndex(lineNode => lineNode.id === line.id) < 0) {
-                            fileNode.children.push(line);
-                        }
-                        this.collapseFileNode(fileNode, collapseValue);
-                    } else {
-                        const newFileNode = this.createFileNode(result.root, path, result.fileUri, rootFolderNode);
-                        this.collapseFileNode(newFileNode, collapseValue);
-                        const line = this.createResultLineNode(result, newFileNode);
-                        newFileNode.children.push(line);
-                        rootFolderNode.children.push(newFileNode);
+                let rootFolderNode = tree.get(result.root);
+                if (!rootFolderNode) {
+                    rootFolderNode = this.createRootFolderNode(result.root);
+                    tree.set(result.root, rootFolderNode);
+                }
+                let fileNode = rootFolderNode.children.find(f => f.fileUri === result.fileUri);
+                if (!fileNode) {
+                    fileNode = this.createFileNode(result.root, path, result.fileUri, rootFolderNode);
+                    this.collapseFileNode(fileNode, collapseValue);
+                }
+                for (const match of result.matches) {
+                    const line = this.createResultLineNode(result, match, fileNode);
+                    if (fileNode.children.findIndex(lineNode => lineNode.id === line.id) < 0) {
+                        fileNode.children.push(line);
                     }
-
-                } else {
-                    const newRootFolderNode = this.createRootFolderNode(result.root);
-                    tree.set(result.root, newRootFolderNode);
-                    const newFileNode = this.createFileNode(result.root, path, result.fileUri, newRootFolderNode);
-                    this.collapseFileNode(newFileNode, collapseValue);
-                    newFileNode.children.push(this.createResultLineNode(result, newFileNode));
-                    newRootFolderNode.children.push(newFileNode);
                 }
             },
             onDone: () => {
@@ -357,12 +347,13 @@ export class SearchInWorkspaceResultTreeWidget extends TreeWidget {
         };
     }
 
-    protected createResultLineNode(result: SearchInWorkspaceResult, fileNode: SearchInWorkspaceFileNode): SearchInWorkspaceResultLineNode {
+    protected createResultLineNode(result: SearchInWorkspaceResult, match: SearchMatch, fileNode: SearchInWorkspaceFileNode): SearchInWorkspaceResultLineNode {
         return {
             ...result,
+            ...match,
             selected: false,
-            id: result.fileUri + '-' + result.line + '-' + result.character + '-' + result.length,
-            name: result.lineText,
+            id: result.fileUri + '-' + match.line + '-' + match.character + '-' + match.length,
+            name: match.lineText,
             parent: fileNode
         };
     }
